@@ -1,5 +1,6 @@
 venv/
 .env
 scratch.md
+scratch1.md
 __pycache__/
 *.pyc
