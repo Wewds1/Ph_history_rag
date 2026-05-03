@@ -17,20 +17,36 @@ app = FastAPI()
 DATA_DIR = "./ph_history"
 
 documents = []
-for filename in os.listdir(DATA_DIR):
-    if filename.endswith(".txt"):
-        file_path = os.path.join(DATA_DIR, filename)
-        loader = TextLoader(file_path, encoding="utf-8")
-        docs = loader.load()
-        for doc in docs:
-            doc.metadata["source"] = filename
-        documents.extend(docs)
+try:
+    if not os.path.isdir(DATA_DIR):
+        raise FileNotFoundError(f"Data directory not found: {DATA_DIR}")
 
-splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
-chunks = splitter.split_documents(documents)
+    for filename in os.listdir(DATA_DIR):
+        if filename.endswith(".txt"):
+            file_path = os.path.join(DATA_DIR, filename)
+            loader = TextLoader(file_path, encoding="utf-8")
+            docs = loader.load()
+            for doc in docs:
+                doc.metadata["source"] = filename
+            documents.extend(docs)
 
-retriever = BM25Retriever.from_documents(chunks)
-retriever.k = 5
+    splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
+    chunks = splitter.split_documents(documents)
+
+    retriever = BM25Retriever.from_documents(chunks)
+    retriever.k = 5
+except Exception as e:
+    import logging
+    logging.exception("Failed to load documents for retrieval; falling back to empty retriever: %s", e)
+
+    class EmptyRetriever:
+        def __init__(self, k=5):
+            self.k = k
+
+        def get_relevant_documents(self, query: str):
+            return []
+
+    retriever = EmptyRetriever()
 
 prompt = ChatPromptTemplate.from_messages(
     [
