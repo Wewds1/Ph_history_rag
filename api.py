@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi import HTTPException
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -58,7 +59,7 @@ prompt = ChatPromptTemplate.from_messages(
     ]
 )
 
-llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
+llm = ChatGoogleGenerativeAI(model="gemini-3-flash-preview", temperature=0)
 question_answer_chain = create_stuff_documents_chain(llm, prompt)
 qa_chain = create_retrieval_chain(retriever, question_answer_chain)
 
@@ -71,8 +72,36 @@ def health():
 
 @app.post("/ask")
 def ask_question(request: QuestionRequest):
-    result = qa_chain.invoke({"input": request.question})
-    return {
-        "answer": result["answer"],
-        "sources": list({doc.metadata.get("source", "unknown") for doc in result.get("context", [])})
-    }
+    try:
+        result = qa_chain.invoke({"input": request.question})
+
+        # Normalize common result shapes from different LangChain versions
+        if isinstance(result, dict):
+            # Try several common keys for the answer text
+            answer = (
+                result.get("answer")
+                or result.get("result")
+                or result.get("output_text")
+                or result.get("output")
+                or None
+            )
+
+            # Collect sources from various possible keys
+            sources = []
+            if "source_documents" in result and isinstance(result["source_documents"], list):
+                sources = [doc.metadata.get("source", "unknown") for doc in result["source_documents"]]
+            elif "context" in result and isinstance(result["context"], list):
+                sources = [doc.metadata.get("source", "unknown") for doc in result["context"]]
+            elif "sources" in result and isinstance(result["sources"], list):
+                sources = result["sources"]
+
+            return {"answer": answer or "", "sources": list(dict.fromkeys(sources))}
+
+        # If result is a plain string or other type, return it as the answer
+        return {"answer": str(result), "sources": []}
+
+    except Exception as e:
+        import logging, traceback
+        logging.exception("Error handling /ask request")
+        # Return a concise error message for debugging (do not expose secrets)
+        raise HTTPException(status_code=500, detail=f"Internal error: {e}")
