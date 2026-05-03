@@ -4,8 +4,9 @@ from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_community.document_loaders import TextLoader
 from langchain_community.retrievers import BM25Retriever
-from langchain.chains import RetrievalQA
-from langchain.prompts import PromptTemplate
+from langchain.chains import create_retrieval_chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain_core.prompts import ChatPromptTemplate
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 import os
 
@@ -31,26 +32,19 @@ chunks = splitter.split_documents(documents)
 retriever = BM25Retriever.from_documents(chunks)
 retriever.k = 5
 
-prompt = PromptTemplate(
-    input_variables=["context", "question"],
-    template="""You are a Philippine history expert.
-Answer using ONLY the context below.
-If not in context, say: "I don't have that information in the documents."
-
-Context:
-{context}
-
-Question: {question}
-Answer:"""
+prompt = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            "You are a Philippine history expert. Answer using ONLY the context below. If not in context, say: \"I don't have that information in the documents.\"",
+        ),
+        ("human", "Context:\n{context}\n\nQuestion: {input}"),
+    ]
 )
 
 llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
-qa_chain = RetrievalQA.from_chain_type(
-    llm=llm,
-    retriever=retriever,
-    chain_type_kwargs={"prompt": prompt},
-    return_source_documents=True
-)
+question_answer_chain = create_stuff_documents_chain(llm, prompt)
+qa_chain = create_retrieval_chain(retriever, question_answer_chain)
 
 class QuestionRequest(BaseModel):
     question: str
@@ -61,8 +55,8 @@ def health():
 
 @app.post("/ask")
 def ask_question(request: QuestionRequest):
-    result = qa_chain.invoke({"query": request.question})
+    result = qa_chain.invoke({"input": request.question})
     return {
-        "answer": result["result"],
-        "sources": list(set([doc.metadata.get("source", "unknown") for doc in result["source_documents"]]))
+        "answer": result["answer"],
+        "sources": list({doc.metadata.get("source", "unknown") for doc in result.get("context", [])})
     }
