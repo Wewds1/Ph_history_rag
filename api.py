@@ -2,23 +2,34 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.document_loaders import TextLoader
+from langchain_community.retrievers import BM25Retriever
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+import os
 
 load_dotenv()
 
 app = FastAPI()
 
-# Load embeddings and index once at startup
-embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-vectorstore = FAISS.load_local(
-    "faiss_index",
-    embeddings,
-    allow_dangerous_deserialization=True
-)
-retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+DATA_DIR = "./ph_history"
+
+documents = []
+for filename in os.listdir(DATA_DIR):
+    if filename.endswith(".txt"):
+        file_path = os.path.join(DATA_DIR, filename)
+        loader = TextLoader(file_path, encoding="utf-8")
+        docs = loader.load()
+        for doc in docs:
+            doc.metadata["source"] = filename
+        documents.extend(docs)
+
+splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
+chunks = splitter.split_documents(documents)
+
+retriever = BM25Retriever.from_documents(chunks)
+retriever.k = 5
 
 prompt = PromptTemplate(
     input_variables=["context", "question"],
